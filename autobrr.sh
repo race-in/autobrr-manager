@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 ############################
 # COLORS
@@ -12,9 +12,6 @@ YELLOW="\e[33m"
 BLUE="\e[34m"
 RESET="\e[0m"
 
-############################
-# HELPERS
-############################
 info()    { echo -e "${BLUE}➜ $1${RESET}"; }
 success() { echo -e "${GREEN}✔ $1${RESET}"; }
 warn()    { echo -e "${YELLOW}⚠ $1${RESET}"; }
@@ -28,9 +25,6 @@ progress() {
   echo
 }
 
-############################
-# ROOT CHECK
-############################
 [ "$EUID" -ne 0 ] && error "Run as root"
 
 ############################
@@ -110,10 +104,10 @@ install_autobrr() {
   id "$AUTOBRR_USER" &>/dev/null || error "User does not exist"
 
   detect_domain
+  get_latest
 
   SESSION_SECRET=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c32)
 
-  get_latest
   info "Installing autobrr v$LATEST_VERSION"
   progress
 
@@ -191,7 +185,7 @@ EOF
 }
 
 ############################
-# UPDATE (SAFE LIFECYCLE)
+# UPDATE (SAFE FIXED)
 ############################
 update_autobrr() {
 
@@ -199,9 +193,10 @@ update_autobrr() {
   command -v autobrr >/dev/null || error "autobrr not installed"
 
   get_latest
-  CUR=$(/usr/local/bin/autobrr version 2>/dev/null | awk '/Version/{print $2}')
 
-  if [ "$CUR" = "$LATEST_VERSION" ]; then
+  CUR=$(autobrr --version 2>/dev/null | head -n1 | awk '{print $2}')
+
+  if [ -n "$CUR" ] && [ "$CUR" = "$LATEST_VERSION" ]; then
     success "Already up to date ($CUR)"
     return
   fi
@@ -209,7 +204,7 @@ update_autobrr() {
   info "Stopping autobrr service..."
   systemctl stop autobrr@"$AUTOBRR_USER"
 
-  info "Updating autobrr $CUR → $LATEST_VERSION"
+  info "Updating autobrr → $LATEST_VERSION"
   progress
 
   TMP=$(mktemp -d)
