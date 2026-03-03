@@ -130,7 +130,7 @@ install_autobrr() {
   CFG="/home/$AUTOBRR_USER/.config/autobrr"
   LOGDIR="$CFG/logs"
   mkdir -p "$LOGDIR"
-  chown -R "$AUTOBRR_USER:$AUTOBRR_USER" "/home/$AUTOBRR_USER/.config"
+  chown -R "$AUTOBRR_USER:$AUTOBRR_USER" "$CFG"
 
   cat >"$CFG/config.toml" <<EOF
 host = "127.0.0.1"
@@ -156,6 +156,7 @@ After=network-online.target
 Type=simple
 User=%i
 Group=%i
+WorkingDirectory=/home/%i/.config/autobrr
 ExecStart=/usr/local/bin/autobrr --config=/home/%i/.config/autobrr/
 Restart=always
 RestartSec=5
@@ -211,7 +212,7 @@ update_autobrr() {
   chmod +x autobrr
   mv autobrr /usr/local/bin/autobrr
 
-  systemctl restart 'autobrr@*'
+  systemctl restart autobrr@"$AUTOBRR_USER"
   rm -rf "$TMP"
 
   success "Update complete"
@@ -259,4 +260,5 @@ case "$CH" in
   3) remove_autobrr ;;
   4) exit 0 ;;
   *) error "Invalid option" ;;
+
 esac
