@@ -1,3 +1,4 @@
 *.tar.gz
 *.log
 .DS_Store
+*.sh text eol=lf
