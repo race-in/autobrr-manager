@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
+VERSION="1.1.0"
+
 ############################
 # COLORS
 ############################
@@ -32,7 +34,7 @@ progress() {
 [ "$EUID" -ne 0 ] && error "Run as root"
 
 ############################
-# LATEST AUTOBRR
+# FETCH LATEST AUTOBRR
 ############################
 get_latest() {
   LATEST_URL=$(curl -s https://api.github.com/repos/autobrr/autobrr/releases/latest \
@@ -49,7 +51,6 @@ get_latest() {
 # DOMAIN DETECT
 ############################
 detect_domain() {
-
   DOMAIN=$(grep -R "server_name" /etc/nginx/sites-enabled 2>/dev/null \
     | grep -v "_" \
     | grep -v "localhost" \
@@ -59,14 +60,12 @@ detect_domain() {
 
   if [ -z "$DOMAIN" ]; then
     HOSTNAME_FQDN=$(hostname -f 2>/dev/null || true)
-    if [[ "$HOSTNAME_FQDN" == *.* ]]; then
-      DOMAIN="$HOSTNAME_FQDN"
-    fi
+    [[ "$HOSTNAME_FQDN" == *.* ]] && DOMAIN="$HOSTNAME_FQDN"
   fi
 
   if [ -z "$DOMAIN" ]; then
     warn "Could not auto-detect domain."
-    read -rp "👉 Enter your domain manually (example.com): " DOMAIN
+    read -rp "Enter domain manually: " DOMAIN
   else
     info "Using domain: $DOMAIN"
   fi
@@ -99,7 +98,6 @@ detect_user() {
     return
   fi
 
-  warn "No users detected in /home"
   read -rp "Enter username manually: " AUTOBRR_USER
 }
 
@@ -127,6 +125,7 @@ install_autobrr() {
 
   CFG="/home/$AUTOBRR_USER/.config/autobrr"
   LOGDIR="$CFG/logs"
+
   mkdir -p "$LOGDIR"
   chown -R "$AUTOBRR_USER:$AUTOBRR_USER" "$CFG"
 
@@ -145,7 +144,6 @@ EOF
 
   chown "$AUTOBRR_USER:$AUTOBRR_USER" "$CFG/config.toml"
 
-  # FIX 1: ensure nginx apps folder exists
   mkdir -p /etc/nginx/apps
 
   cat >/etc/systemd/system/autobrr@.service <<'EOF'
@@ -168,7 +166,7 @@ EOF
 
   systemctl daemon-reload
   systemctl enable autobrr@"$AUTOBRR_USER"
-  systemctl restart autobrr@"$AUTOBRR_USER"
+  systemctl start autobrr@"$AUTOBRR_USER"
 
   cat >/etc/nginx/apps/autobrr.conf <<EOF
 location = /autobrr { return 301 /autobrr/; }
@@ -189,23 +187,27 @@ EOF
   success "Installed successfully"
   echo
   echo -e "${GREEN}🌐 https://$DOMAIN/autobrr/${RESET}"
-  echo -e "${BLUE}📄 Logs: /home/$AUTOBRR_USER/.config/autobrr/logs/autobrr.log${RESET}"
+  echo -e "${BLUE}📄 Logs: $CFG/logs/autobrr.log${RESET}"
 }
 
 ############################
-# UPDATE
+# UPDATE (SAFE LIFECYCLE)
 ############################
 update_autobrr() {
 
-  # FIX 2: detect user before restart
   detect_user
-
   command -v autobrr >/dev/null || error "autobrr not installed"
 
   get_latest
-  CUR=$(autobrr version | awk '/Version/{print $2}')
+  CUR=$(/usr/local/bin/autobrr version 2>/dev/null | awk '/Version/{print $2}')
 
-  [ "$CUR" = "$LATEST_VERSION" ] && success "Already up to date ($CUR)" && return
+  if [ "$CUR" = "$LATEST_VERSION" ]; then
+    success "Already up to date ($CUR)"
+    return
+  fi
+
+  info "Stopping autobrr service..."
+  systemctl stop autobrr@"$AUTOBRR_USER"
 
   info "Updating autobrr $CUR → $LATEST_VERSION"
   progress
@@ -216,9 +218,10 @@ update_autobrr() {
   tar -xzf autobrr.tar.gz
   chmod +x autobrr
   mv autobrr /usr/local/bin/autobrr
-
-  systemctl restart autobrr@"$AUTOBRR_USER"
   rm -rf "$TMP"
+
+  info "Starting autobrr service..."
+  systemctl start autobrr@"$AUTOBRR_USER"
 
   success "Update complete"
 }
@@ -233,6 +236,7 @@ remove_autobrr() {
 
   systemctl stop 'autobrr@*' 2>/dev/null || true
   systemctl disable 'autobrr@*' 2>/dev/null || true
+
   rm -f /etc/systemd/system/autobrr@.service
   systemctl daemon-reload
   rm -f /usr/local/bin/autobrr
@@ -253,11 +257,14 @@ echo "================================"
 echo "   AUTOBRR MANAGEMENT TOOL"
 echo "================================"
 echo -e "${RESET}"
+echo "Version: $VERSION"
+echo
 echo "1) Install autobrr"
 echo "2) Update autobrr"
 echo "3) Remove autobrr"
 echo "4) Exit"
 echo
+
 read -rp "Select option [1-4]: " CH
 
 case "$CH" in
