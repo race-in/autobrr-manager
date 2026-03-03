@@ -46,11 +46,10 @@ get_latest() {
 }
 
 ############################
-# DOMAIN DETECT (FIXED)
+# DOMAIN DETECT
 ############################
 detect_domain() {
 
-  # Try nginx server_name
   DOMAIN=$(grep -R "server_name" /etc/nginx/sites-enabled 2>/dev/null \
     | grep -v "_" \
     | grep -v "localhost" \
@@ -58,7 +57,6 @@ detect_domain() {
     | awk '{print $1}' \
     | head -n1)
 
-  # Fallback: FQDN hostname (only if real domain)
   if [ -z "$DOMAIN" ]; then
     HOSTNAME_FQDN=$(hostname -f 2>/dev/null || true)
     if [[ "$HOSTNAME_FQDN" == *.* ]]; then
@@ -66,7 +64,6 @@ detect_domain() {
     fi
   fi
 
-  # Ask manually if still empty
   if [ -z "$DOMAIN" ]; then
     warn "Could not auto-detect domain."
     read -rp "👉 Enter your domain manually (example.com): " DOMAIN
@@ -110,6 +107,7 @@ detect_user() {
 # INSTALL
 ############################
 install_autobrr() {
+
   detect_user
   id "$AUTOBRR_USER" &>/dev/null || error "User does not exist"
 
@@ -146,6 +144,9 @@ checkForUpdates = true
 EOF
 
   chown "$AUTOBRR_USER:$AUTOBRR_USER" "$CFG/config.toml"
+
+  # FIX 1: ensure nginx apps folder exists
+  mkdir -p /etc/nginx/apps
 
   cat >/etc/systemd/system/autobrr@.service <<'EOF'
 [Unit]
@@ -195,6 +196,10 @@ EOF
 # UPDATE
 ############################
 update_autobrr() {
+
+  # FIX 2: detect user before restart
+  detect_user
+
   command -v autobrr >/dev/null || error "autobrr not installed"
 
   get_latest
@@ -222,6 +227,7 @@ update_autobrr() {
 # REMOVE
 ############################
 remove_autobrr() {
+
   warn "Removing autobrr completely"
   progress
 
@@ -260,5 +266,4 @@ case "$CH" in
   3) remove_autobrr ;;
   4) exit 0 ;;
   *) error "Invalid option" ;;
-
 esac
