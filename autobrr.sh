@@ -102,7 +102,7 @@ fix_nginx_include() {
 
   mkdir -p /etc/nginx/apps
 
-  SERVER_FILE=$(grep -Rl "server_name" /etc/nginx/sites-enabled 2>/dev/null | head -n1)
+  SERVER_FILE=$(grep -Rl "server_name" /etc/nginx/sites-enabled | head -n1)
 
   if [ -n "$SERVER_FILE" ]; then
     if ! grep -q "apps/\*.conf" "$SERVER_FILE"; then
@@ -158,7 +158,9 @@ EOF
 
   chown "$AUTOBRR_USER:$AUTOBRR_USER" "$CFG/config.toml"
 
-  mkdir -p /etc/nginx/apps
+  ############################
+  # SYSTEMD SERVICE
+  ############################
 
   cat >/etc/systemd/system/autobrr@.service <<'EOF'
 [Unit]
@@ -182,51 +184,37 @@ EOF
   systemctl enable autobrr@"$AUTOBRR_USER"
   systemctl start autobrr@"$AUTOBRR_USER"
 
+  ############################
+  # NGINX CONFIG
+  ############################
+
   cat >/etc/nginx/apps/autobrr.conf <<EOF
 location = /autobrr { return 301 /autobrr/; }
+
 location /autobrr/ {
-  proxy_pass http://127.0.0.1:7474;
+  proxy_pass http://127.0.0.1:7474/autobrr/;
   proxy_http_version 1.1;
-  proxy_buffering off;
-  proxy_redirect off;
+
   proxy_set_header Host \$host;
+  proxy_set_header X-Forwarded-Host \$host;
+  proxy_set_header X-Forwarded-Proto \$scheme;
+
   proxy_set_header X-Real-IP \$remote_addr;
   proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-  proxy_set_header X-Forwarded-Proto \$scheme;
+
+  proxy_redirect off;
+  proxy_buffering off;
 }
 EOF
 
-  nginx -t && systemctl reload nginx
+  if nginx -t; then
+      systemctl reload nginx
+  else
+      error "nginx configuration failed"
+  fi
 
   success "Installed successfully"
   echo
   echo -e "${GREEN}🌐 https://$DOMAIN/autobrr/${RESET}"
   echo -e "${BLUE}📄 Logs: $CFG/logs/autobrr.log${RESET}"
 }
-
-############################
-# MENU
-############################
-clear
-echo -e "${GREEN}"
-echo "================================"
-echo "   AUTOBRR MANAGEMENT TOOL"
-echo "================================"
-echo -e "${RESET}"
-echo "Version: $VERSION"
-echo
-echo "1) Install autobrr"
-echo "2) Update autobrr"
-echo "3) Remove autobrr"
-echo "4) Exit"
-echo
-
-read -rp "Select option [1-4]: " CH
-
-case "$CH" in
-  1) install_autobrr ;;
-  2) update_autobrr ;;
-  3) remove_autobrr ;;
-  4) exit 0 ;;
-  *) error "Invalid option" ;;
-esac
