@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-VERSION="1.2.1"
+VERSION="1.2.0"
 
 ############################
 # COLORS
@@ -31,74 +31,68 @@ progress() {
 # FETCH LATEST AUTOBRR
 ############################
 get_latest() {
+  LATEST_URL=$(curl -s https://api.github.com/repos/autobrr/autobrr/releases/latest \
+    | grep browser_download_url \
+    | grep linux_x86_64.tar.gz \
+    | cut -d\" -f4)
 
-LATEST_URL=$(curl -s https://api.github.com/repos/autobrr/autobrr/releases/latest \
-| grep browser_download_url \
-| grep linux_x86_64.tar.gz \
-| cut -d\" -f4)
+  [ -z "$LATEST_URL" ] && error "Cannot detect latest autobrr"
 
-[ -z "$LATEST_URL" ] && error "Cannot detect latest autobrr"
-
-LATEST_VERSION=$(basename "$LATEST_URL" | sed -E 's/autobrr_([0-9.]+)_linux.*/\1/')
-
+  LATEST_VERSION=$(basename "$LATEST_URL" | sed -E 's/autobrr_([0-9.]+)_linux.*/\1/')
 }
 
 ############################
 # DOMAIN DETECT
 ############################
 detect_domain() {
+  DOMAIN=$(grep -R "server_name" /etc/nginx/sites-enabled 2>/dev/null \
+    | grep -v "_" \
+    | grep -v "localhost" \
+    | sed -E 's/.*server_name\s+([^;]+);/\1/' \
+    | awk '{print $1}' \
+    | head -n1)
 
-DOMAIN=$(grep -R "server_name" /etc/nginx/sites-enabled 2>/dev/null \
-| grep -v "_" \
-| grep -v "localhost" \
-| sed -E 's/.*server_name\s+([^;]+);/\1/' \
-| awk '{print $1}' \
-| head -n1)
+  if [ -z "$DOMAIN" ]; then
+    HOSTNAME_FQDN=$(hostname -f 2>/dev/null || true)
+    [[ "$HOSTNAME_FQDN" == *.* ]] && DOMAIN="$HOSTNAME_FQDN"
+  fi
 
-if [ -z "$DOMAIN" ]; then
-HOSTNAME_FQDN=$(hostname -f 2>/dev/null || true)
-[[ "$HOSTNAME_FQDN" == *.* ]] && DOMAIN="$HOSTNAME_FQDN"
-fi
-
-if [ -z "$DOMAIN" ]; then
-warn "Could not auto-detect domain."
-read -rp "Enter domain manually: " DOMAIN
-else
-info "Using domain: $DOMAIN"
-fi
-
+  if [ -z "$DOMAIN" ]; then
+    warn "Could not auto-detect domain."
+    read -rp "Enter domain manually: " DOMAIN
+  else
+    info "Using domain: $DOMAIN"
+  fi
 }
 
 ############################
 # USER DETECT
 ############################
 detect_user() {
+  USERS=($(ls /home 2>/dev/null || true))
 
-USERS=($(ls /home 2>/dev/null || true))
+  if [ "${#USERS[@]}" -eq 1 ]; then
+    AUTOBRR_USER="${USERS[0]}"
+    info "Detected user: $AUTOBRR_USER"
+    return
+  fi
 
-if [ "${#USERS[@]}" -eq 1 ]; then
-AUTOBRR_USER="${USERS[0]}"
-info "Detected user: $AUTOBRR_USER"
-return
-fi
+  if [ "${#USERS[@]}" -gt 1 ]; then
+    echo
+    info "Available users:"
+    select u in "${USERS[@]}" "Manual input"; do
+      if [ "$u" = "Manual input" ]; then
+        read -rp "Enter username: " AUTOBRR_USER
+        break
+      elif [ -n "$u" ]; then
+        AUTOBRR_USER="$u"
+        break
+      fi
+    done
+    return
+  fi
 
-if [ "${#USERS[@]}" -gt 1 ]; then
-echo
-info "Available users:"
-select u in "${USERS[@]}" "Manual input"; do
-if [ "$u" = "Manual input" ]; then
-read -rp "Enter username: " AUTOBRR_USER
-break
-elif [ -n "$u" ]; then
-AUTOBRR_USER="$u"
-break
-fi
-done
-return
-fi
-
-read -rp "Enter username manually: " AUTOBRR_USER
-
+  read -rp "Enter username manually: " AUTOBRR_USER
 }
 
 ############################
@@ -106,23 +100,18 @@ read -rp "Enter username manually: " AUTOBRR_USER
 ############################
 fix_nginx_include() {
 
-mkdir -p /etc/nginx/apps
+  mkdir -p /etc/nginx/apps
 
-SERVER_FILE=$(grep -Rl "server_name" /etc/nginx/sites-enabled | head -n1)
+  SERVER_FILE=$(grep -Rl "server_name" /etc/nginx/sites-enabled | head -n1)
 
-if [ -n "$SERVER_FILE" ]; then
-
-if ! grep -q "apps/\*.conf" "$SERVER_FILE"; then
-info "Adding nginx apps include to server block"
-sed -i '/server_name/a \    include /etc/nginx/apps/*.conf;' "$SERVER_FILE"
-fi
-
-else
-
-warn "Could not detect nginx server config"
-
-fi
-
+  if [ -n "$SERVER_FILE" ]; then
+    if ! grep -q "apps/\*.conf" "$SERVER_FILE"; then
+      info "Adding nginx apps include to server block"
+      sed -i '/server_name/a \    include /etc/nginx/apps/*.conf;' "$SERVER_FILE"
+    fi
+  else
+    warn "Could not detect nginx server config"
+  fi
 }
 
 ############################
@@ -130,32 +119,31 @@ fi
 ############################
 install_autobrr() {
 
-detect_user
-id "$AUTOBRR_USER" &>/dev/null || error "User does not exist"
+  detect_user
+  id "$AUTOBRR_USER" &>/dev/null || error "User does not exist"
 
-detect_domain
-get_latest
-fix_nginx_include
+  detect_domain
+  get_latest
+  fix_nginx_include
 
-SESSION_SECRET=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c32)
+  SESSION_SECRET=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c32)
 
-info "Installing autobrr v$LATEST_VERSION"
-progress
+  info "Installing autobrr v$LATEST_VERSION"
+  progress
 
-cd /root
+  cd /root
+  wget -q "$LATEST_URL" -O autobrr.tar.gz
+  tar -xzf autobrr.tar.gz
+  chmod +x autobrr
+  mv autobrr /usr/local/bin/autobrr
 
-wget -q "$LATEST_URL" -O autobrr.tar.gz
-tar -xzf autobrr.tar.gz
+  CFG="/home/$AUTOBRR_USER/.config/autobrr"
+  LOGDIR="$CFG/logs"
 
-chmod +x autobrr
-mv autobrr /usr/local/bin/autobrr
+  mkdir -p "$LOGDIR"
+  chown -R "$AUTOBRR_USER:$AUTOBRR_USER" "$CFG"
 
-CFG="/home/$AUTOBRR_USER/.config/autobrr"
-LOGDIR="$CFG/logs"
-
-mkdir -p "$LOGDIR"
-
-cat >"$CFG/config.toml" <<EOF
+  cat >"$CFG/config.toml" <<EOF
 host = "127.0.0.1"
 port = 7474
 baseUrl = "/autobrr/"
@@ -168,13 +156,11 @@ sessionSecret = "$SESSION_SECRET"
 checkForUpdates = true
 EOF
 
-chown -R "$AUTOBRR_USER:$AUTOBRR_USER" "$CFG"
+  chown "$AUTOBRR_USER:$AUTOBRR_USER" "$CFG/config.toml"
 
-############################
-# SYSTEMD SERVICE
-############################
+  mkdir -p /etc/nginx/apps
 
-cat >/etc/systemd/system/autobrr@.service <<'EOF'
+  cat >/etc/systemd/system/autobrr@.service <<'EOF'
 [Unit]
 Description=autobrr service for %i
 After=network-online.target
@@ -192,22 +178,17 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable autobrr@"$AUTOBRR_USER"
-systemctl start autobrr@"$AUTOBRR_USER"
+  systemctl daemon-reload
+  systemctl enable autobrr@"$AUTOBRR_USER"
+  systemctl start autobrr@"$AUTOBRR_USER"
 
-############################
-# NGINX CONFIG
-############################
-
-cat >/etc/nginx/apps/autobrr.conf <<EOF
+  cat >/etc/nginx/apps/autobrr.conf <<EOF
 location = /autobrr { return 301 /autobrr/; }
-
 location /autobrr/ {
   proxy_pass http://127.0.0.1:7474;
   proxy_http_version 1.1;
   proxy_buffering off;
-
+  proxy_redirect off;
   proxy_set_header Host \$host;
   proxy_set_header X-Real-IP \$remote_addr;
   proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -215,115 +196,10 @@ location /autobrr/ {
 }
 EOF
 
-if nginx -t; then
-systemctl reload nginx
-else
-error "nginx config failed"
-fi
+  nginx -t && systemctl reload nginx
 
-success "Installed successfully"
-
-echo
-echo -e "${GREEN}🌐 https://$DOMAIN/autobrr/${RESET}"
-echo -e "${BLUE}📄 Logs: $CFG/logs/autobrr.log${RESET}"
-
+  success "Installed successfully"
+  echo
+  echo -e "${GREEN}🌐 https://$DOMAIN/autobrr/${RESET}"
+  echo -e "${BLUE}📄 Logs: $CFG/logs/autobrr.log${RESET}"
 }
-
-############################
-# UPDATE
-############################
-update_autobrr() {
-
-detect_user
-command -v autobrr >/dev/null || error "autobrr not installed"
-
-get_latest
-
-CUR=$(autobrr --version 2>/dev/null | head -n1 | awk '{print $2}')
-
-if [ -n "$CUR" ] && [ "$CUR" = "$LATEST_VERSION" ]; then
-success "Already up to date ($CUR)"
-return
-fi
-
-info "Stopping autobrr service..."
-systemctl stop autobrr@"$AUTOBRR_USER"
-
-info "Updating autobrr → $LATEST_VERSION"
-progress
-
-TMP=$(mktemp -d)
-cd "$TMP"
-
-wget -q "$LATEST_URL" -O autobrr.tar.gz
-tar -xzf autobrr.tar.gz
-
-chmod +x autobrr
-mv autobrr /usr/local/bin/autobrr
-
-rm -rf "$TMP"
-
-info "Starting autobrr service..."
-systemctl start autobrr@"$AUTOBRR_USER"
-
-success "Update complete"
-
-}
-
-############################
-# REMOVE
-############################
-remove_autobrr() {
-
-warn "Removing autobrr completely"
-progress
-
-systemctl stop 'autobrr@*' 2>/dev/null || true
-systemctl disable 'autobrr@*' 2>/dev/null || true
-
-rm -f /etc/systemd/system/autobrr@.service
-systemctl daemon-reload
-
-rm -f /usr/local/bin/autobrr
-rm -f /etc/nginx/apps/autobrr.conf
-
-find /home -type d -path "*/.config/autobrr" -exec rm -rf {} +
-
-nginx -t && systemctl reload nginx
-
-success "autobrr fully removed"
-
-}
-
-############################
-# MENU
-############################
-
-clear
-
-echo -e "${GREEN}"
-echo "================================"
-echo "   AUTOBRR MANAGEMENT TOOL"
-echo "================================"
-echo -e "${RESET}"
-
-echo "Version: $VERSION"
-echo
-echo "1) Install autobrr"
-echo "2) Update autobrr"
-echo "3) Remove autobrr"
-echo "4) Exit"
-echo
-
-read -rp "Select option [1-4]: " CH
-
-case "$CH" in
-
-1) install_autobrr ;;
-2) update_autobrr ;;
-3) remove_autobrr ;;
-4) exit 0 ;;
-
-*) error "Invalid option" ;;
-
-esac
