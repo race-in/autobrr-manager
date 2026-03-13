@@ -77,22 +77,17 @@ detect_user() {
     return
   fi
 
-  if [ "${#USERS[@]}" -gt 1 ]; then
-    echo
-    info "Available users:"
-    select u in "${USERS[@]}" "Manual input"; do
-      if [ "$u" = "Manual input" ]; then
-        read -rp "Enter username: " AUTOBRR_USER
-        break
-      elif [ -n "$u" ]; then
-        AUTOBRR_USER="$u"
-        break
-      fi
-    done
-    return
-  fi
-
-  read -rp "Enter username manually: " AUTOBRR_USER
+  echo
+  info "Available users:"
+  select u in "${USERS[@]}" "Manual input"; do
+    if [ "$u" = "Manual input" ]; then
+      read -rp "Enter username: " AUTOBRR_USER
+      break
+    elif [ -n "$u" ]; then
+      AUTOBRR_USER="$u"
+      break
+    fi
+  done
 }
 
 ############################
@@ -143,26 +138,24 @@ install_autobrr() {
   mkdir -p "$LOGDIR"
   chown -R "$AUTOBRR_USER:$AUTOBRR_USER" "$CFG"
 
-  cat >"$CFG/config.toml" <<EOF
+cat >"$CFG/config.toml" <<EOF
 host = "127.0.0.1"
 port = 7474
 baseUrl = "/autobrr/"
 baseUrlModeLegacy = false
 logLevel = "INFO"
 logPath = "logs/autobrr.log"
-logMaxSize = 50
-logMaxBackups = 5
 sessionSecret = "$SESSION_SECRET"
 checkForUpdates = true
 EOF
 
-  chown "$AUTOBRR_USER:$AUTOBRR_USER" "$CFG/config.toml"
+chown "$AUTOBRR_USER:$AUTOBRR_USER" "$CFG/config.toml"
 
-  ############################
-  # SYSTEMD SERVICE
-  ############################
+############################
+# SYSTEMD
+############################
 
-  cat >/etc/systemd/system/autobrr@.service <<'EOF'
+cat >/etc/systemd/system/autobrr@.service <<'EOF'
 [Unit]
 Description=autobrr service for %i
 After=network-online.target
@@ -180,15 +173,15 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-  systemctl daemon-reload
-  systemctl enable autobrr@"$AUTOBRR_USER"
-  systemctl start autobrr@"$AUTOBRR_USER"
+systemctl daemon-reload
+systemctl enable autobrr@"$AUTOBRR_USER"
+systemctl start autobrr@"$AUTOBRR_USER"
 
-  ############################
-  # NGINX CONFIG
-  ############################
+############################
+# NGINX CONFIG
+############################
 
-  cat >/etc/nginx/apps/autobrr.conf <<EOF
+cat >/etc/nginx/apps/autobrr.conf <<EOF
 location = /autobrr { return 301 /autobrr/; }
 
 location /autobrr/ {
@@ -207,14 +200,104 @@ location /autobrr/ {
 }
 EOF
 
-  if nginx -t; then
-      systemctl reload nginx
-  else
-      error "nginx configuration failed"
-  fi
+if nginx -t; then
+  systemctl reload nginx
+else
+  error "nginx configuration failed"
+fi
 
-  success "Installed successfully"
-  echo
-  echo -e "${GREEN}🌐 https://$DOMAIN/autobrr/${RESET}"
-  echo -e "${BLUE}📄 Logs: $CFG/logs/autobrr.log${RESET}"
+success "Installed successfully"
+
+echo
+echo -e "${GREEN}🌐 https://$DOMAIN/autobrr/${RESET}"
+echo -e "${BLUE}📄 Logs: $CFG/logs/autobrr.log${RESET}"
+
 }
+
+############################
+# UPDATE
+############################
+update_autobrr() {
+
+detect_user
+command -v autobrr >/dev/null || error "autobrr not installed"
+
+get_latest
+
+CUR=$(autobrr --version 2>/dev/null | head -n1 | awk '{print $2}')
+
+if [ -n "$CUR" ] && [ "$CUR" = "$LATEST_VERSION" ]; then
+success "Already up to date ($CUR)"
+return
+fi
+
+systemctl stop autobrr@"$AUTOBRR_USER"
+
+TMP=$(mktemp -d)
+cd "$TMP"
+
+wget -q "$LATEST_URL" -O autobrr.tar.gz
+tar -xzf autobrr.tar.gz
+chmod +x autobrr
+mv autobrr /usr/local/bin/autobrr
+
+rm -rf "$TMP"
+
+systemctl start autobrr@"$AUTOBRR_USER"
+
+success "Update complete"
+
+}
+
+############################
+# REMOVE
+############################
+remove_autobrr() {
+
+warn "Removing autobrr completely"
+progress
+
+systemctl stop 'autobrr@*' 2>/dev/null || true
+systemctl disable 'autobrr@*' 2>/dev/null || true
+
+rm -f /etc/systemd/system/autobrr@.service
+systemctl daemon-reload
+
+rm -f /usr/local/bin/autobrr
+rm -f /etc/nginx/apps/autobrr.conf
+
+find /home -type d -path "*/.config/autobrr" -exec rm -rf {} +
+
+nginx -t && systemctl reload nginx
+
+success "autobrr fully removed"
+
+}
+
+############################
+# MENU
+############################
+
+clear
+echo -e "${GREEN}"
+echo "================================"
+echo "   AUTOBRR MANAGEMENT TOOL"
+echo "================================"
+echo -e "${RESET}"
+echo "Version: $VERSION"
+echo
+echo "1) Install autobrr"
+echo "2) Update autobrr"
+echo "3) Remove autobrr"
+echo "4) Exit"
+echo
+
+read -rp "Select option [1-4]: " CH
+
+case "$CH" in
+  1) install_autobrr ;;
+  2) update_autobrr ;;
+  3) remove_autobrr ;;
+  4) exit 0 ;;
+  *) error "Invalid option" ;;
+esac
